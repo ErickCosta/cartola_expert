@@ -1,0 +1,35 @@
+{
+  "name": "cartola_expert",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx src/index.ts",
+    "dev:tls": "powershell -NoProfile -Command \"$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; npx tsx src/index.ts\""
+
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ErickCosta/cartola_expert.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/ErickCosta/cartola_expert/issues"
+  },
+  "homepage": "https://github.com/ErickCosta/cartola_expert#readme",
+  "dependencies": {
+    "axios": "^1.13.5",
+    "dotenv": "^17.2.4",
+    "javascript-lp-solver": "^1.0.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
