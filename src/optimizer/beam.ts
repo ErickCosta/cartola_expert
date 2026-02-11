@@ -68,6 +68,87 @@ function buildMinCostHelper(byPos: Map<Posicao, ScoredAtleta[]>, formation: Form
   return { minRemainingCost };
 }
 
+// ======================================================
+// Regras HARD de consistência do time
+// 1) Confronto direto: ataque vs defesa do adversário
+// 2) Atacante visitante só entra se awayAtkException=true
+// ======================================================
+
+function isAttackPos(pos: any) {
+  return pos === "ATA" || pos === "MEI" || pos === "LAT";
+}
+
+function isDefensePos(pos: any) {
+  return pos === "GOL" || pos === "ZAG" || pos === "LAT";
+}
+
+function getOpponentId(a: any): number | null {
+  const v =
+    a?.opponentId ??
+    a?.adversarioId ??
+    a?.clubeAdversarioId ??
+    a?.opponentClubId ??
+    a?.opponent_clube_id;
+
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getClubId(a: any): number | null {
+  const n = Number(a?.clubeId ?? a?.clube_id);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isHomeFlag(a: any): boolean | null {
+  if (a?.isHome === true) return true;
+  if (a?.isHome === false) return false;
+  return null;
+}
+
+/**
+ * Regra hard:
+ * Atacante visitante só entra se for exceção (awayAtkException === true).
+ * (ATA/MEI/LAT) fora sem exceção => bloqueia.
+ */
+function violatesAwayAttackerMustBeException(cand: any): boolean {
+  const home = isHomeFlag(cand);
+  if (home !== false) return false; // se é casa ou desconhecido, não bloqueia aqui
+
+  const pos = cand?.posicao ?? cand?.pos;
+  if (!isAttackPos(pos)) return false;
+
+  return cand?.awayAtkException !== true;
+}
+
+/**
+ * Regra hard:
+ * Não permitir no mesmo time "ataque de um clube" + "defesa do adversário" (mesmo confronto).
+ */
+function violatesDirectConfrontation(picked: any[], cand: any): boolean {
+  const candClub = getClubId(cand);
+  const candOpp = getOpponentId(cand);
+  if (candClub == null || candOpp == null) return false;
+
+  const candPos = cand?.posicao ?? cand?.pos;
+  const candIsAtk = isAttackPos(candPos);
+  const candIsDef = isDefensePos(candPos);
+  if (!candIsAtk && !candIsDef) return false;
+
+  for (const p of picked) {
+    const pClub = getClubId(p);
+    if (pClub == null) continue;
+
+    const pPos = p?.posicao ?? p?.pos;
+    const pIsAtk = isAttackPos(pPos);
+    const pIsDef = isDefensePos(pPos);
+
+    if (candIsAtk && pIsDef && pClub === candOpp) return true;
+    if (candIsDef && pIsAtk && pClub === candOpp) return true;
+  }
+
+  return false;
+}
+
 export function optimizeBeam(params: {
   atletas: ScoredAtleta[];
   budget: number;
@@ -92,11 +173,9 @@ export function optimizeBeam(params: {
     if (!Number.isFinite(preco) || preco < 0) continue;
     if (!Number.isFinite(score)) continue;
 
-    // garante que posicao existe
     const pos: Posicao = (a as any).posicao ?? (a as any).pos;
     if (!pos || !byPos.has(pos)) continue;
 
-    // garante `preco` no objeto para custo final consistente
     (a as any).preco = preco;
     (a as any).posicao = pos;
     (a as any).score = score;
@@ -117,9 +196,7 @@ export function optimizeBeam(params: {
     TEC: formation.TEC,
   };
 
-  let beam: TeamState[] = [
-    { picked: [], usedIds: new Set(), cost: 0, score: 0, remaining },
-  ];
+  let beam: TeamState[] = [{ picked: [], usedIds: new Set(), cost: 0, score: 0, remaining }];
 
   if (minRemainingCost(remaining) > budget) {
     throw new Error(
@@ -161,6 +238,12 @@ export function optimizeBeam(params: {
       for (const a of candidates) {
         if (state.usedIds.has((a as any).id)) continue;
 
+        // ✅ HARD: atacante visitante só entra se for exceção
+        if (violatesAwayAttackerMustBeException(a as any)) continue;
+
+        // ✅ HARD: bloqueia "confronto direto" (ataque vs defesa do adversário)
+        if (violatesDirectConfrontation(state.picked as any[], a as any)) continue;
+
         const rem = state.remaining[nextPos];
         if (rem <= 0) continue;
 
@@ -195,7 +278,6 @@ export function optimizeBeam(params: {
       );
     }
 
-    // rank: score alto, mas sem “se matar” no custo
     nextBeam.sort((a, b) => {
       const ra = a.score - costPenalty * a.cost;
       const rb = b.score - costPenalty * b.cost;

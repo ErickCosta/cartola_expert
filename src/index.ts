@@ -49,22 +49,19 @@ const COST_PENALTY_VAL = 0.07;
 // ================================
 // HOME PRIORITY + AWAY EXCEPTION
 // ================================
-const HOME_BOOST_ATK = 1.18;
-const HOME_BOOST_DEF = 1.15;
+const HOME_BOOST_ATK = 1.40
+const HOME_BOOST_DEF = 1.30;
 
-const AWAY_PENALTY_ATK = 0.85;
-const AWAY_PENALTY_DEF = 0.88;
+const AWAY_PENALTY_ATK = 0.70;
+const AWAY_PENALTY_DEF = 0.60;
 
 // Exceção fora (time goleador vs peneira) — thresholds de time
-const STRONG_ATK_TH = 1.05;
-const WEAK_DEF_TH = 0.88;
+const STRONG_ATK_TH = 1.00;
+const WEAK_DEF_TH = 0.85;
 
 // Exceção fora depende do jogador (evita visitante “mediano” entrar só por ser do time forte)
-const PLAYER_OFF_TH = 0.55; // ajuste fino: 0.45 (mais permissivo) | 0.65 (mais rígido)
+const PLAYER_OFF_TH = 0.65; // ajuste fino: 0.45 (mais permissivo) | 0.65 (mais rígido)
 
-// ================================
-// Auto-calibração de escala
-// ================================
 const ALPHA_MIN = 1.6;
 const ALPHA_MAX = 3.2;
 
@@ -174,6 +171,13 @@ async function main() {
 
   const partidas = Array.isArray(partidasRes.data?.partidas) ? partidasRes.data.partidas : partidasRes.data;
   const ctx = buildOpponentCtx(partidas);
+
+  console.log("CTX debug:", {
+    totalClubs: ctx.isHomeByClubeId.size,
+    totalOpp: ctx.opponentByClubeId.size,
+    homeCount: [...ctx.isHomeByClubeId.values()].filter(v => v === true).length,
+    awayCount: [...ctx.isHomeByClubeId.values()].filter(v => v === false).length,
+  });
 
   const ratings = buildClubRatings(atletas);
 

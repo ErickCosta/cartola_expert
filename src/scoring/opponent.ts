@@ -20,23 +20,39 @@ function tanh(x: number) {
  * - isHomeByClubeId
  */
 export function buildOpponentCtx(partidas: any[]) {
-  const opponentByClubeId = new Map<number, number>();
   const isHomeByClubeId = new Map<number, boolean>();
+  const opponentByClubeId = new Map<number, number>();
 
-  for (const p of partidas) {
-    const mandante = p.clube_casa_id;
-    const visitante = p.clube_visitante_id;
-    if (!mandante || !visitante) continue;
+  for (const p of partidas ?? []) {
+    // Detecta possíveis nomes vindos da API
+    const homeId = Number(
+      p?.clube_casa_id ??
+      p?.clubeCasaId ??
+      p?.home_team_id ??
+      p?.homeId
+    );
 
-    opponentByClubeId.set(mandante, visitante);
-    opponentByClubeId.set(visitante, mandante);
+    const awayId = Number(
+      p?.clube_visitante_id ??
+      p?.clubeVisitanteId ??
+      p?.away_team_id ??
+      p?.awayId
+    );
 
-    isHomeByClubeId.set(mandante, true);
-    isHomeByClubeId.set(visitante, false);
+    if (!Number.isFinite(homeId) || !Number.isFinite(awayId)) continue;
+
+    // ✅ marca mando para os dois lados
+    isHomeByClubeId.set(homeId, true);
+    isHomeByClubeId.set(awayId, false);
+
+    // ✅ define adversário para os dois lados
+    opponentByClubeId.set(homeId, awayId);
+    opponentByClubeId.set(awayId, homeId);
   }
 
-  return { opponentByClubeId, isHomeByClubeId };
+  return { isHomeByClubeId, opponentByClubeId };
 }
+
 
 export function matchupOffMultiplier(params: {
   clubeId: number;
