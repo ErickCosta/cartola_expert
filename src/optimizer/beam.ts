@@ -1,3 +1,4 @@
+// src/optimizer/beam.ts
 import type { Atleta, Posicao } from "../cartola/types.js";
 import type { Formation } from "./formation.js";
 
@@ -26,28 +27,87 @@ function cloneRemaining(r: Record<Posicao, number>) {
 }
 
 function posOrder(): Posicao[] {
-  // ordem ajuda a estabilizar construção
   return ["GOL", "LAT", "ZAG", "MEI", "ATA", "TEC"];
+}
+
+function buildMinCostHelper(byPos: Map<Posicao, ScoredAtleta[]>, formation: Formation) {
+  const prefix: Record<Posicao, number[]> = {
+    GOL: [0],
+    LAT: [0],
+    ZAG: [0],
+    MEI: [0],
+    ATA: [0],
+    TEC: [0],
+  };
+
+  for (const p of posOrder()) {
+    const need = formation[p];
+    const costs = (byPos.get(p) ?? [])
+      .map((a) => Number((a as any).preco ?? (a as any).price))
+      .filter((x) => Number.isFinite(x) && x >= 0)
+      .sort((a, b) => a - b);
+
+    if (costs.length < need) {
+      throw new Error(`Sem candidatos suficientes para posição ${p}. Need=${need}, pool=${costs.length}`);
+    }
+
+    const pref = [0];
+    for (let i = 1; i <= need; i++) pref[i] = pref[i - 1] + costs[i - 1];
+    prefix[p] = pref;
+  }
+
+  function minRemainingCost(remaining: Record<Posicao, number>) {
+    let total = 0;
+    for (const p of posOrder()) {
+      const k = remaining[p] ?? 0;
+      total += prefix[p][k] ?? 0;
+    }
+    return total;
+  }
+
+  return { minRemainingCost };
 }
 
 export function optimizeBeam(params: {
   atletas: ScoredAtleta[];
   budget: number;
   formation: Formation;
-  beamWidth?: number; // ex: 200
-  candidatesPerStep?: number; // ex: 60
+  beamWidth?: number;
+  candidatesPerStep?: number;
+  costPenalty?: number; // default 0.08
 }): Picked {
   const { atletas, budget, formation } = params;
   const beamWidth = params.beamWidth ?? 250;
   const candidatesPerStep = params.candidatesPerStep ?? 80;
+  const costPenalty = params.costPenalty ?? 0.08;
 
   // separa por posição e ordena por score desc
   const byPos = new Map<Posicao, ScoredAtleta[]>();
   for (const p of posOrder()) byPos.set(p, []);
-  for (const a of atletas) byPos.get(a.posicao)!.push(a);
-  for (const p of posOrder()) byPos.get(p)!.sort((a, b) => b.score - a.score);
 
-  // remaining inicial
+  for (const a of atletas) {
+    const preco = Number((a as any).preco ?? (a as any).price);
+    const score = Number((a as any).score);
+
+    if (!Number.isFinite(preco) || preco < 0) continue;
+    if (!Number.isFinite(score)) continue;
+
+    // garante que posicao existe
+    const pos: Posicao = (a as any).posicao ?? (a as any).pos;
+    if (!pos || !byPos.has(pos)) continue;
+
+    // garante `preco` no objeto para custo final consistente
+    (a as any).preco = preco;
+    (a as any).posicao = pos;
+    (a as any).score = score;
+
+    byPos.get(pos)!.push(a);
+  }
+
+  for (const p of posOrder()) byPos.get(p)!.sort((a, b) => (b as any).score - (a as any).score);
+
+  const { minRemainingCost } = buildMinCostHelper(byPos, formation);
+
   const remaining: Record<Posicao, number> = {
     GOL: formation.GOL,
     LAT: formation.LAT,
@@ -58,27 +118,25 @@ export function optimizeBeam(params: {
   };
 
   let beam: TeamState[] = [
-    {
-      picked: [],
-      usedIds: new Set(),
-      cost: 0,
-      score: 0,
-      remaining,
-    },
+    { picked: [], usedIds: new Set(), cost: 0, score: 0, remaining },
   ];
 
+  if (minRemainingCost(remaining) > budget) {
+    throw new Error(
+      `Mesmo o time mais barato não cabe no orçamento. MinCost=${minRemainingCost(remaining).toFixed(
+        2
+      )} > budget=${budget.toFixed(2)}`
+    );
+  }
+
   while (true) {
-    // terminou?
     const done = beam.find((s) => sumRemaining(s.remaining) === 0);
     if (done) return { atletas: done.picked, custo: done.cost, score: done.score };
 
-    // escolhe próxima posição a preencher: a que ainda falta e com menor pool (heurística)
     const needPositions = posOrder().filter((p) => beam[0].remaining[p] > 0);
+    if (!needPositions.length) break;
 
-    // fallback (nunca deveria acontecer)
-    if (needPositions.length === 0) break;
-
-    // pega a posição mais "crítica": menos candidatos disponíveis
+    // escolhe próxima posição (menor pool primeiro)
     let nextPos: Posicao = needPositions[0];
     let minPool = Infinity;
     for (const p of needPositions) {
@@ -90,34 +148,39 @@ export function optimizeBeam(params: {
     }
 
     const candidates = byPos.get(nextPos)!;
-    if (!candidates.length) {
-      throw new Error(`Sem candidatos para posição ${nextPos}.`);
-    }
+    if (!candidates.length) throw new Error(`Sem candidatos para posição ${nextPos}.`);
 
     const nextBeam: TeamState[] = [];
 
     for (const state of beam) {
-      // tenta adicionar os melhores candidatos dessa posição (limitando quantidade por passo)
+      const minRem = minRemainingCost(state.remaining);
+      if (state.cost + minRem > budget) continue;
+
       let added = 0;
 
       for (const a of candidates) {
-        if (state.usedIds.has(a.id)) continue;
-        if (state.cost + a.preco > budget) continue;
+        if (state.usedIds.has((a as any).id)) continue;
 
         const rem = state.remaining[nextPos];
         if (rem <= 0) continue;
 
+        const newCost = state.cost + Number((a as any).preco);
+        if (!Number.isFinite(newCost) || newCost > budget) continue;
+
         const newRemaining = cloneRemaining(state.remaining);
         newRemaining[nextPos] = rem - 1;
 
+        const minRem2 = minRemainingCost(newRemaining);
+        if (newCost + minRem2 > budget) continue;
+
         const newUsed = new Set(state.usedIds);
-        newUsed.add(a.id);
+        newUsed.add((a as any).id);
 
         nextBeam.push({
           picked: [...state.picked, a],
           usedIds: newUsed,
-          cost: state.cost + a.preco,
-          score: state.score + a.score,
+          cost: newCost,
+          score: state.score + Number((a as any).score),
           remaining: newRemaining,
         });
 
@@ -127,15 +190,18 @@ export function optimizeBeam(params: {
     }
 
     if (!nextBeam.length) {
-      // não achou expansão possível (orçamento apertado)
       throw new Error(
-        `Não foi possível montar time completo com orçamento C$ ${budget}. ` +
-        `Tente aumentar orçamento ou reduzir formação/TEC.`
+        `Não foi possível montar time completo com orçamento C$ ${budget}. Tente aumentar orçamento ou reduzir formação/TEC.`
       );
     }
 
-    // Mantém só os melhores estados
-    nextBeam.sort((a, b) => b.score - a.score);
+    // rank: score alto, mas sem “se matar” no custo
+    nextBeam.sort((a, b) => {
+      const ra = a.score - costPenalty * a.cost;
+      const rb = b.score - costPenalty * b.cost;
+      return rb - ra;
+    });
+
     beam = nextBeam.slice(0, beamWidth);
   }
 

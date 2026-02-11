@@ -1,121 +1,118 @@
 // src/scoring/scout-score.ts
-import type { Atleta } from "../cartola/types.js";
 
-function s(scout: Record<string, number> | undefined, key: string): number {
-  return Number(scout?.[key] ?? 0);
+type PosKey = "GOL" | "ZAG" | "LAT" | "MEI" | "ATA" | "TEC";
+
+export type NormalizedAtleta = {
+  id: number;
+  apelido: string;
+  clubeId: number;
+  posicao: PosKey;
+
+  preco: number;
+  jogos: number;
+  media: number;
+
+  scout?: Record<string, number | undefined>;
+};
+
+export type ScoutParts = {
+  offTalent: number; // talento ofensivo (histórico)
+  defTalent: number; // talento defensivo (histórico)
+  media: number;     // média do cartola (histórico agregado)
+};
+
+function n(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-function blend(scoutScore: number, media: number, isHome: boolean) {
-  const mediaAdj = media * (isHome ? 1.06 : 0.97);
-  return 0.65 * scoutScore + 0.35 * mediaAdj;
+function getScout(a: NormalizedAtleta, key: string): number {
+  return n(a.scout?.[key]);
 }
 
 /**
- * Score baseado em scout do /atletas/mercado (histórico agregado) normalizado por jogos_num.
- * Depois mistura com média (para evitar distorções como goleiro com média muito negativa).
+ * Shrinkage para início de campeonato:
+ * rate = (raw + k*prior) / (games + k)
+ * prior = 0 porque a gente já mistura com média (media_num)
  */
-export function scoreByScout(atleta: Atleta, ctx: { isHome: boolean }): number {
-  const jogos = Math.max(atleta.jogos, 1);
-  const scout = atleta.scout ?? {};
+function perGame(raw: number, games: number, k = 3, prior = 0): number {
+  const g = Math.max(0, n(games));
+  return (raw + k * prior) / (g + k);
+}
 
-  // fallback: se não tiver scout nenhum, volta pra média com mando
-  if (Object.keys(scout).length === 0) {
-    return atleta.media * (ctx.isHome ? 1.06 : 0.97);
+// Mando (leve) por tipo
+const HOME_ATK = 1.06;
+const AWAY_ATK = 0.94;
+const HOME_DEF = 1.05;
+const AWAY_DEF = 0.95;
+
+export function scoreByScoutParts(atleta: NormalizedAtleta, opts: { isHome: boolean }): ScoutParts {
+  const isHome = !!opts.isHome;
+
+  const games = Math.max(0, n(atleta.jogos));
+  const media = n(atleta.media);
+
+  // Scouts relevantes (SEM SG e SEM GS aqui)
+  const DD = getScout(atleta, "DD");
+  const DS = getScout(atleta, "DS");
+  const A  = getScout(atleta, "A");
+  const G  = getScout(atleta, "G");
+
+  // Normaliza por jogo com shrinkage
+  const dd = perGame(DD, games);
+  const ds = perGame(DS, games);
+  const a  = perGame(A, games);
+  const g  = perGame(G, games);
+
+  let offTalent = 0;
+  let defTalent = 0;
+
+  switch (atleta.posicao) {
+    case "GOL":
+      // talento do GOL = defesas por jogo
+      defTalent = dd * 1.0;
+      break;
+
+    case "ZAG":
+      defTalent = ds * 1.0;
+      break;
+
+    case "LAT":
+      defTalent = ds * 1.0;
+      offTalent = a * 0.75;
+      break;
+
+    case "MEI":
+      defTalent = ds * 0.70;
+      offTalent = a * 1.00 + g * 1.15;
+      break;
+
+    case "ATA":
+      offTalent = g * 1.25 + a * 0.80;
+      break;
+
+    case "TEC":
+      // técnico não usa scout aqui (vai direto na média no index)
+      offTalent = 0;
+      defTalent = 0;
+      break;
   }
 
-  const G = s(scout, "G") / jogos;
-  const A = s(scout, "A") / jogos;
-  const DS = s(scout, "DS") / jogos;
+  // aplica mando separado
+  const offMult = isHome ? HOME_ATK : AWAY_ATK;
+  const defMult = isHome ? HOME_DEF : AWAY_DEF;
 
-  // SG pode vir como SG ou GS dependendo do ano
-  const SG = (s(scout, "SG") || s(scout, "GS")) / jogos;
+  return {
+    offTalent: offTalent * offMult,
+    defTalent: defTalent * defMult,
+    media,
+  };
+}
 
-  const DE = s(scout, "DE") / jogos;
-  const DD = s(scout, "DD") / jogos;
-  const DP = s(scout, "DP") / jogos;
-
-  const CA = s(scout, "CA") / jogos;
-  const CV = s(scout, "CV") / jogos;
-  const GC = s(scout, "GC") / jogos;
-  const PP = s(scout, "PP") / jogos;
-  const FC = s(scout, "FC") / jogos;
-  const I = s(scout, "I") / jogos;
-
-  const FF = s(scout, "FF") / jogos;
-  const FD = s(scout, "FD") / jogos;
-  const FT = s(scout, "FT") / jogos;
-
-  const mandoAtk = ctx.isHome ? 1.10 : 0.95;
-  const mandoDef = ctx.isHome ? 1.08 : 0.97;
-
-  let scoutScore = 0;
-
-  if (atleta.posicao === "GOL") {
-    scoutScore =
-      SG * 7.0 * mandoDef +
-      DS * 1.2 +
-      DE * 0.9 +
-      DD * 1.6 +
-      DP * 7.0 -
-      CA * 1.0 -
-      CV * 3.0 -
-      GC * 5.0;
-
-    return blend(scoutScore, atleta.media, ctx.isHome);
-  }
-
-  if (atleta.posicao === "ZAG") {
-    scoutScore =
-      SG * 7.0 * mandoDef +
-      DS * 1.6 -
-      CA * 1.0 -
-      CV * 3.0 -
-      FC * 0.4 -
-      GC * 5.0;
-
-    return blend(scoutScore, atleta.media, ctx.isHome);
-  }
-
-  if (atleta.posicao === "LAT") {
-    scoutScore =
-      SG * 6.5 * mandoDef +
-      DS * 1.3 +
-      A * 5.0 * mandoAtk +
-      G * 6.0 * mandoAtk -
-      CA * 1.0 -
-      CV * 3.0 -
-      FC * 0.4;
-
-    return blend(scoutScore, atleta.media, ctx.isHome);
-  }
-
-  if (atleta.posicao === "MEI") {
-    scoutScore =
-      DS * 1.2 +
-      A * 6.0 * mandoAtk +
-      G * 6.5 * mandoAtk +
-      (FF + FD + FT) * 0.25 -
-      CA * 1.0 -
-      CV * 3.0 -
-      PP * 3.0;
-
-    return blend(scoutScore, atleta.media, ctx.isHome);
-  }
-
-  if (atleta.posicao === "ATA") {
-    scoutScore =
-      G * 7.5 * mandoAtk +
-      A * 4.5 * mandoAtk +
-      (FF + FD + FT) * 0.35 -
-      CA * 1.0 -
-      CV * 3.0 -
-      PP * 3.0 -
-      I * 0.2;
-
-    return blend(scoutScore, atleta.media, ctx.isHome);
-  }
-
-  // TEC: média + mando
-  const mandoTec = ctx.isHome ? 1.05 : 0.98;
-  return atleta.media * mandoTec;
+/**
+ * Mantém compatibilidade: score único (talento puro + média).
+ * OBS: matchup + SG esperado ficam no index.
+ */
+export function scoreByScout(atleta: NormalizedAtleta, opts: { isHome: boolean }) {
+  const { offTalent, defTalent, media } = scoreByScoutParts(atleta, opts);
+  return (offTalent + defTalent) * 0.65 + media * 0.35;
 }
