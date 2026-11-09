@@ -113,3 +113,16 @@ Antes de distribuir o projeto, verifique as dependências com `npm audit` e não
 ## Licença
 
 Distribuído sob a **ISC License**. Consulte o arquivo [`LICENSE`](LICENSE) para o texto integral.
+
+## Testes automatizados
+
+A suíte utiliza o test runner nativo do Node.js com TypeScript executado pelo `tsx` (já presente nas dependências de desenvolvimento). Não depende da API externa do Cartola.
+
+```bash
+npm ci
+npm test
+```
+
+Para executar em modo de observação: `npm run test:watch`.
+
+Os testes cobrem interpretação de formações, normalização e filtro de atletas, contexto de partidas, funções de pontuação/valorização e seleção de candidatos. Ainda não cobrem o fluxo completo da CLI nem o otimizador Beam Search.

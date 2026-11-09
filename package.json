@@ -4,10 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --import tsx --test tests/*.test.ts",
     "dev": "tsx src/index.ts",
-    "dev:tls": "powershell -NoProfile -Command \"$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; npx tsx src/index.ts\""
-
+    "dev:tls": "powershell -NoProfile -Command \"$env:NODE_TLS_REJECT_UNAUTHORIZED='0'; npx tsx src/index.ts\"",
+    "test:watch": "node --import tsx --test --watch tests/*.test.ts"
   },
   "repository": {
     "type": "git",
